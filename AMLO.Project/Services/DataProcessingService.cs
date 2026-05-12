@@ -1,4 +1,5 @@
-﻿using AMLO.Project.Models;
+﻿using AMLO.Project.Helpers;
+using AMLO.Project.Models;
 using AMLO.Project.Services.Dac;
 using System;
 using System.Collections.Generic;
@@ -74,8 +75,37 @@ namespace AMLO.Project.Services
                         continue; // ⚡ กลับไปขึ้นต้น Loop ใหม่สำหรับไฟล์ถัดไป
                     }
 
-                    // 2.2 ถ้าเป็นไฟล์ใหม่ (เช่น taliban...csv) ให้ส่งชื่อไฟล์ตรงๆ ไปอ่าน
-                    // ซึ่ง Reader จะอ่านแค่ไฟล์นี้ไฟล์เดียว เพราะไม่มีเครื่องหมาย * แล้ว
+                    // ✨ Use FileNameParser helper to extract TypeName and Version
+                    if (!FileNameParser.IsValidFileName(actualFileName))
+                    {
+                        var errorMsg = $"Invalid filename format. Expected format: {{TypeName}}_{{Version}}_*.csv";
+                        Console.WriteLine($"[ERROR] {errorMsg} | File: {actualFileName}");
+                        await _fileTracker.RecordFileFailedAsync(actualFileName, errorMsg, cancellationToken);
+                        continue;
+                    }
+
+                    var (typeName, version) = FileNameParser.ParseFileName(actualFileName);
+
+                    Console.WriteLine($"[INFO] Extracted from filename - TypeName: {typeName}, Version: {version}");
+
+                    // ⭐ STEP 1: Archive old data ONCE per file (before reading CSV)
+                    // This ensures that old versions of this TypeName move to history
+                    // only once, not for every record in the CSV
+                    Console.WriteLine($"[INFO] Checking if TypeName '{typeName}' exists in amlo_master...");
+                    bool typeNameExists = await _dac.TypeNameExistsAsync(typeName, cancellationToken);
+
+                    if (typeNameExists)
+                    {
+                        Console.WriteLine($"[INFO] Found existing TypeName '{typeName}' - archiving to amlo_history...");
+                        await _dac.ArchiveToHistoryAsync(typeName, cancellationToken);
+                        Console.WriteLine($"[SUCCESS] Archived TypeName '{typeName}' to amlo_history");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"[INFO] TypeName '{typeName}' is new - no archiving needed");
+                    }
+
+                    // 2.2 อ่านข้อมูลจากไฟล์
                     var records = await _csvReader.ReadCsvAsync(actualFileName, cancellationToken);
                     if (records == null || !records.Any())
                     {
@@ -84,7 +114,7 @@ namespace AMLO.Project.Services
                         continue;
                     }
 
-                    // 2.3 บันทึกลงฐานข้อมูล
+                    // 2.3 บันทึกลงฐานข้อมูล - Insert/Update ให้ amlo_master
                     var recordCount = 0;
                     foreach (var row in records)
                     {
@@ -93,13 +123,19 @@ namespace AMLO.Project.Services
                         if (!row.TryGetValue("ENTITY_ID", out var entityId) || string.IsNullOrEmpty(entityId))
                             continue;
 
-                        var dto = new AmloDto { EntityId = entityId };
+                        var dto = new AmloDto
+                        {
+                            EntityId = entityId,
+                            TypeName = typeName,
+                            Version = version
+                        };
                         foreach (var kv in row)
                         {
                             if (kv.Key.Equals("ENTITY_ID", StringComparison.OrdinalIgnoreCase)) continue;
                             if (!string.IsNullOrEmpty(kv.Value)) dto.RawData[kv.Key] = kv.Value;
                         }
 
+                        // ✨ Simply upsert to amlo_master (archive already done above)
                         await _dac.UpsertDataAsync(dto, cancellationToken);
                         recordCount++;
                     }
