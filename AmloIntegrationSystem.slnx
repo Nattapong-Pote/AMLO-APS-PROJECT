@@ -1,0 +1,7 @@
+<Solution>
+  <Project Path="AMLO.Project/AMLO.Project.csproj" />`n  <Project Path="AMLO.Project/AMLO.Project.csproj" />`n  <Project Path="Amlo.CommonDataAccess/Amlo.CommonDataAccess.csproj" Id="b9ea1d75-792b-4b08-bea7-2aaa566362e0" />
+  <Project Path="Amlo.ProcessRawData/Amlo.ProcessRawData.csproj" />
+  <Project Path="Amlo.SyncInMemory/Amlo.SyncInMemory.csproj" />
+  <Project Path="Amlo.TestRunnerSync/Amlo.TestRunnerSync.csproj" />
+</Solution>
+
