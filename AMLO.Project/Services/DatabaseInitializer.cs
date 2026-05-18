@@ -12,11 +12,11 @@ namespace AMLO.Project.Services
 
     public class DatabaseInitializer : IDatabaseInitializer
     {
-        private readonly ISurrealDbClient _dbClient;
+        private readonly ISurrealDbSession _dbClient;
         private const string AmloMasterTableName = "amlo_master";
         private const string AmloHistoryTableName = "amlo_history";
 
-        public DatabaseInitializer(ISurrealDbClient dbClient)
+        public DatabaseInitializer(ISurrealDbSession dbClient)
         {
             _dbClient = dbClient;
         }

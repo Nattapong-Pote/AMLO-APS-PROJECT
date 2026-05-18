@@ -2,6 +2,7 @@ using AMLO.Project.Extensions;
 using AMLO.Project.Services;
 using AMLO.Project.Services.Dac;
 using AMLO.Project.Services.SurrealDbProvider;
+using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -16,6 +17,13 @@ internal static class Program
     {
         Console.WriteLine("=== AMLO Integration System ===\n");
 
+        var builder = WebApplication.CreateBuilder(args);
+
+        builder.Services.AddControllers();
+        builder.Services.AddEndpointsApiExplorer();
+        builder.Services.AddSwaggerGen();
+        builder.Services.AddHttpClient();
+
         // Configuration
         const string dbUrl = "http://127.0.0.1:8000";
         const string dbUser = "root";
@@ -28,8 +36,6 @@ internal static class Program
         Console.WriteLine($"[CONFIG] Namespace: {dbNamespace} | Database: {dbDatabase}");
         Console.WriteLine($"[CONFIG] Blob/File Pattern: {csvBlobPattern}\n");
 
-        var builder = Host.CreateApplicationBuilder(args);
-        builder.Services.AddHttpClient();
         builder.Services.AddSingleton<IConfiguration>(builder.Configuration);
 
         // Register AMLO services
@@ -48,43 +54,11 @@ internal static class Program
 
         try
         {
-            // Step 0: Bootstrap - Authenticate with SurrealDB immediately
-            Console.WriteLine("[STEP 0] Bootstrapping SurrealDB authentication...");
-            var dbClient = scope.ServiceProvider.GetRequiredService<ISurrealDbClient>();
-            var authContext = scope.ServiceProvider.GetRequiredService<SurrealDbAuthContext>();
-
-            await AuthenticateDbClient(dbClient, authContext);
-            Console.WriteLine("[✓] SurrealDB authenticated and context set!\n");
-
-            // Step 1: Verify ISurrealDbClient registration
-            Console.WriteLine("[STEP 1] Verifying ISurrealDbClient registration...");
-            if (dbClient == null)
-            {
-                throw new InvalidOperationException("ISurrealDbClient is NOT registered!");
-            }
-            Console.WriteLine("[✓] ISurrealDbClient verified!\n");
-
             // Step 2: Initialize Database
             Console.WriteLine("[STEP 2] Initializing database...");
             var dbInitializer = scope.ServiceProvider.GetRequiredService<IDatabaseInitializer>();
             await dbInitializer.InitializeAsync();
             Console.WriteLine("[✓] Database initialized!\n");
-
-            // Step 3: Prepare CSV import
-            Console.WriteLine($"[STEP 3] Preparing to import CSV with pattern: {csvBlobPattern}");
-
-            // Step 4: Resolve DataProcessingService
-            Console.WriteLine($"[STEP 4] Resolving DataProcessingService...");
-            var processService = scope.ServiceProvider.GetRequiredService<DataProcessingService>();
-            Console.WriteLine($"[✓] DataProcessingService resolved!\n");
-
-            // Step 5: Import CSV
-            Console.WriteLine($"[STEP 5] Starting CSV import...");
-            Console.WriteLine($"[*] Reading and processing CSV records...\n");
-            await processService.ImportCsvAsync(csvBlobPattern);
-
-            Console.WriteLine($"\n[✅] SUCCESS! All tasks completed!");
-            Console.WriteLine($"    CSV data has been imported to SurrealDB table 'amlo_master'");
         }
         catch (InvalidOperationException ex)
         {
@@ -105,38 +79,14 @@ internal static class Program
             }
         }
 
-        Console.WriteLine("\nPress any key to exit...");
-        Console.ReadKey();
-    }
-
-    /// <summary>
-    /// Authenticates the SurrealDB client with provided credentials and sets namespace/database context.
-    /// This must be called before any CRUD operations to ensure proper permissions.
-    /// </summary>
-    private static async Task AuthenticateDbClient(ISurrealDbClient dbClient, SurrealDbAuthContext authContext)
-    {
-        try
+        host.UseSwagger();
+        host.UseSwaggerUI(options =>
         {
-            // Sign in with root credentials
-            Console.WriteLine($"[*] Signing in with user '{authContext.Username}'...");
-            await dbClient.SignIn(new RootAuth
-            {
-                Username = authContext.Username,
-                Password = authContext.Password
-            });
-            Console.WriteLine($"[✓] Authentication successful!");
+            options.SwaggerEndpoint("/swagger/v1/swagger.json", "AMLO Integration API v1");
+            options.RoutePrefix = string.Empty;
+        });
 
-            // Set namespace and database context
-            Console.WriteLine($"[*] Setting namespace '{authContext.Namespace}' and database '{authContext.Database}'...");
-            await dbClient.Use(authContext.Namespace, authContext.Database);
-            Console.WriteLine($"[✓] Namespace and database context set!");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[✗] Authentication failed: {ex.Message}");
-            throw new InvalidOperationException(
-                $"Failed to authenticate with SurrealDB at {dbClient}. " +
-                $"Ensure SurrealDB is running and credentials are correct.", ex);
-        }
+        host.MapControllers();
+        host.Run();
     }
 }

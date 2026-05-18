@@ -81,50 +81,50 @@ public class DbProvider<TsurrealModel, TamloModel> : IDbProvider<TsurrealModel, 
     where TsurrealModel : class, IRecord
     where TamloModel : class
 {
-    private readonly ISurrealDbClient _surrealDbClient;
+    private readonly ISurrealDbSession _surrealDbSession;
 
-    public DbProvider(ISurrealDbClient surrealDbClient)
+    public DbProvider(ISurrealDbSession surrealDbClient)
     {
-        _surrealDbClient = surrealDbClient;
+        _surrealDbSession = surrealDbClient;
     }
 
     public string Table => typeof(TsurrealModel).Name;
 
     public async Task<IEnumerable<TsurrealModel>> List(CancellationToken cancellationToken)
     {
-        return await _surrealDbClient.Select<TsurrealModel>(Table, cancellationToken);
+        return await _surrealDbSession.Select<TsurrealModel>(Table, cancellationToken);
     }
 
     public async Task<IEnumerable<TamloModel>> ListX(CancellationToken cancellationToken)
     {
-        return await _surrealDbClient.Select<TamloModel>(Table, cancellationToken);
+        return await _surrealDbSession.Select<TamloModel>(Table, cancellationToken);
     }
 
     public async Task<TsurrealModel?> Get(string id, CancellationToken cancellationToken)
     {
-        return await _surrealDbClient.Select<TsurrealModel>((Table, id), cancellationToken);
+        return await _surrealDbSession.Select<TsurrealModel>((Table, id), cancellationToken);
     }
 
     public async Task<TamloModel?> GetX(string id, CancellationToken cancellationToken)
     {
-        var data = await _surrealDbClient.Select<TsurrealModel>((Table, id), cancellationToken);
+        var data = await _surrealDbSession.Select<TsurrealModel>((Table, id), cancellationToken);
         return data?.Adapt<TamloModel>();
     }
 
     public async Task<TsurrealModel?> Get(RecordId id, CancellationToken cancellationToken)
     {
-        return await _surrealDbClient.Select<TsurrealModel>(id, cancellationToken);
+        return await _surrealDbSession.Select<TsurrealModel>(id, cancellationToken);
     }
 
     public async Task<TsurrealModel> Create(TsurrealModel data, CancellationToken cancellationToken)
     {
-        return await _surrealDbClient.Create(Table, data, cancellationToken);
+        return await _surrealDbSession.Create(Table, data, cancellationToken);
     }
 
     public async Task<TamloModel> CreateX(TamloModel data, CancellationToken cancellationToken)
     {
         var srData = data.Adapt<TsurrealModel>();
-        var createdSrData = await _surrealDbClient.Create(Table, srData, cancellationToken);
+        var createdSrData = await _surrealDbSession.Create(Table, srData, cancellationToken);
         return createdSrData.Adapt<TamloModel>();
     }
 
@@ -141,7 +141,7 @@ public class DbProvider<TsurrealModel, TamloModel> : IDbProvider<TsurrealModel, 
         foreach (var batch in dataList.Chunk(BatchSizeConstants.SurrealSafeBatchSize))
         {
             var surrealBatch = batch.Adapt<List<TsurrealModel>>();
-            var insertedBatch = await _surrealDbClient.Insert(Table, surrealBatch, cancellationToken);
+            var insertedBatch = await _surrealDbSession.Insert(Table, surrealBatch, cancellationToken);
             returnData.AddRange(insertedBatch.Select(s => s.Adapt<TamloModel>()));
         }
 
@@ -150,73 +150,73 @@ public class DbProvider<TsurrealModel, TamloModel> : IDbProvider<TsurrealModel, 
 
     public async Task<TsurrealModel> Upsert(TsurrealModel data, CancellationToken cancellationToken)
     {
-        return await _surrealDbClient.Upsert(data, cancellationToken);
+        return await _surrealDbSession.Upsert(data, cancellationToken);
     }
 
     public async Task<TamloModel> UpsertX(TamloModel data, CancellationToken cancellationToken)
     {
         var x = data.Adapt<TsurrealModel>();
-        var y = await _surrealDbClient.Upsert(x, cancellationToken);
+        var y = await _surrealDbSession.Upsert(x, cancellationToken);
         return y.Adapt<TamloModel>();
     }
 
     public async Task<TsurrealModel> Update(string id, Dictionary<string, object?> data, CancellationToken cancellationToken)
     {
         var thing = RecordId.From(Table, id);
-        return await _surrealDbClient.Merge<TsurrealModel>(thing, data, cancellationToken);
+        return await _surrealDbSession.Merge<TsurrealModel>(thing, data, cancellationToken);
     }
 
     public async Task<TamloModel> UpdateX(string id, Dictionary<string, object?> data, CancellationToken cancellationToken)
     {
         var thing = RecordId.From(Table, id);
-        var x = await _surrealDbClient.Merge<TsurrealModel>(thing, data, cancellationToken);
+        var x = await _surrealDbSession.Merge<TsurrealModel>(thing, data, cancellationToken);
         return x.Adapt<TamloModel>();
     }
 
     public async Task<TsurrealModel> Update(RecordId id, Dictionary<string, object?> data, CancellationToken cancellationToken)
     {
-        return await _surrealDbClient.Merge<TsurrealModel>(id, data, cancellationToken);
+        return await _surrealDbSession.Merge<TsurrealModel>(id, data, cancellationToken);
     }
 
     public async Task<SurrealDbResponse> Query(FormattableString qry, IReadOnlyDictionary<string, object?>? parameters = default, CancellationToken cancellationToken = default)
     {
-        return await _surrealDbClient.RawQuery(qry.ToString(), parameters, cancellationToken);
+        return await _surrealDbSession.RawQuery(qry.ToString(), parameters, cancellationToken);
     }
 
     public async Task<IEnumerable<Ts>?> Query<Ts>(FormattableString qry, IReadOnlyDictionary<string, object?>? parameters = default, CancellationToken cancellationToken = default)
     {
-        var documents = await _surrealDbClient.RawQuery(qry.ToString(), parameters, cancellationToken);
+        var documents = await _surrealDbSession.RawQuery(qry.ToString(), parameters, cancellationToken);
         return documents.GetValue<IEnumerable<Ts>?>(0);
     }
 
     public async Task<Ts?> QueryOne<Ts>(FormattableString qry, IReadOnlyDictionary<string, object?>? parameters = default, CancellationToken cancellationToken = default) where Ts : class
     {
-        var documents = await _surrealDbClient.RawQuery(qry.ToString(), parameters, cancellationToken);
+        var documents = await _surrealDbSession.RawQuery(qry.ToString(), parameters, cancellationToken);
         var list = documents.GetValue<IEnumerable<Ts>?>(0);
         return list?.FirstOrDefault();
     }
 
     public async Task<IEnumerable<TamloModel>> Select(FormattableString qry, IReadOnlyDictionary<string, object?>? parameters = default, CancellationToken cancellationToken = default)
     {
-        var data = (await _surrealDbClient.RawQuery(qry.ToString(), parameters, cancellationToken)).GetValue<IEnumerable<TsurrealModel>>(0);
+        var data = (await _surrealDbSession.RawQuery(qry.ToString(), parameters, cancellationToken)).GetValue<IEnumerable<TsurrealModel>>(0);
         return data.Adapt<IEnumerable<TamloModel>>();
     }
 
     public async Task<IEnumerable<TamloModel>> SelectIndex(FormattableString qry, IReadOnlyDictionary<string, object?>? parameters = default, int qryIndex = 0, CancellationToken cancellationToken = default)
     {
-        var data = (await _surrealDbClient.RawQuery(qry.ToString(), parameters, cancellationToken)).GetValue<IEnumerable<TsurrealModel>>(qryIndex);
+        var data = (await _surrealDbSession.RawQuery(qry.ToString(), parameters, cancellationToken)).GetValue<IEnumerable<TsurrealModel>>(qryIndex);
         return data.Adapt<IEnumerable<TamloModel>>();
     }
 
     public async Task<TamloModel> SelectOne(FormattableString qry, IReadOnlyDictionary<string, object?>? parameters = default, CancellationToken cancellationToken = default)
     {
-        var data = (await _surrealDbClient.RawQuery(qry.ToString(), parameters, cancellationToken)).GetValue<IEnumerable<TsurrealModel>>(0).FirstOrDefault();
+        var data = (await _surrealDbSession.RawQuery(qry.ToString(), parameters, cancellationToken)).GetValue<IEnumerable<TsurrealModel>>(0).FirstOrDefault();
         return data?.Adapt<TamloModel>()!;
     }
 
     public async Task<TamloModel> SelectOneIndex(FormattableString qry, IReadOnlyDictionary<string, object?>? parameters = default, int qryIndex = 0, CancellationToken cancellationToken = default)
     {
-        var data = (await _surrealDbClient.RawQuery(qry.ToString(), parameters, cancellationToken)).GetValue<IEnumerable<TsurrealModel>>(qryIndex).FirstOrDefault();
+        var data = (await _surrealDbSession.RawQuery(qry.ToString(), parameters, cancellationToken)).GetValue<IEnumerable<TsurrealModel>>(qryIndex).FirstOrDefault();
         return data?.Adapt<TamloModel>()!;
     }
 }

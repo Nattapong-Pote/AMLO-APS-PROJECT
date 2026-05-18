@@ -8,17 +8,6 @@ using SurrealDb.Net;
 
 namespace AMLO.Project.Extensions
 {
-    /// <summary>
-    /// Container for SurrealDB authentication context
-    /// </summary>
-    public class SurrealDbAuthContext
-    {
-        public string Username { get; set; }
-        public string Password { get; set; }
-        public string Namespace { get; set; }
-        public string Database { get; set; }
-    }
-
     public static class AmloServiceCollectionExtensions
     {
         public static IServiceCollection AddAmloProject(
@@ -31,41 +20,23 @@ namespace AMLO.Project.Extensions
         {
             MapsterConfig.RegisterMappings();
 
-            // Store auth context in DI for later use
-            var authContext = new SurrealDbAuthContext
-            {
-                Username = user,
-                Password = pass,
-                Namespace = ns,
-                Database = db
-            };
+            // เชื่อมต่อระบบกับฐานข้อมูล SurrealDB ผ่านมาตรฐาน Connection String
+            var connectionString = $"Server={dbUrl};Namespace={ns};Database={db};Username={user};Password={pass}";
+            services.AddSurreal(connectionString);
 
-            services.AddSingleton(authContext);
-
-            // Register SurrealDbClient as SINGLETON
-            // This ensures there is only ONE authenticated instance used throughout the application
-            // The single instance will be authenticated once and reused by all services
-            services.AddSingleton<ISurrealDbClient>(provider =>
-            {
-                var client = new SurrealDbClient(dbUrl);
-                return client;
-            });
-
-            services.AddSingleton<SurrealDbProviderFactoryBase, SurrealDbProviderFactory>();
-            services.AddSingleton<SurrealDbProviderFactory>();
-
+            // ลงทะเบียนหน่วยประมวลผลพื้นฐานของฐานข้อมูล SurrealDB
+            services.AddScoped<SurrealDbProviderFactoryBase, SurrealDbProviderFactory>();
+            services.AddScoped<SurrealDbProviderFactory>();
             services.AddScoped(typeof(IDbProvider<,>), typeof(DbProvider<,>));
 
-            // Register Database Initializer (will handle auth)
+            // ลงทะเบียนตัวจัดการเตรียมฐานข้อมูล
             services.AddScoped<IDatabaseInitializer, DatabaseInitializer>();
 
-            // Register ProcessDataService
+            // ลงทะเบียนคลาสจัดการข้อมูลในระบบส่วนที่ 2
             services.AddScoped<IProcessDataServiceDAC, ProcessDataServiceDAC>();
-
-            // Register ProcessedFileTracker
             services.AddScoped<IProcessedFileTrackerDAC, ProcessedFileTrackerDAC>();
 
-            // Register CsvFileReaderService
+            // ลงทะเบียนตัวอ่านไฟล์ข้อมูลแยกตามรูปแบบของ Configuration
             services.AddScoped<ICsvFileReaderServiceDAC>(provider =>
             {
                 var config = provider.GetRequiredService<IConfiguration>();
