@@ -64,13 +64,13 @@ namespace AMLO.Project.Services
                     Console.WriteLine($"\n[INFO] Start processing file: {actualFileName}");
 
                     // 2.1 เอาชื่อไฟล์จริง (เช่น al-qaida...csv) มาเช็คว่าเคยทำหรือยัง
-                    var isAlreadyProcessed = await _fileTracker.IsFileAlreadyProcessedAsync(actualFileName, cancellationToken);
+                    var isAlreadyProcessed = await _fileTracker.GetByFileName(actualFileName, cancellationToken);
                     if (isAlreadyProcessed)
                     {
                         // ถ้าเคยทำแล้ว ให้ข้าม (Skip) ไปไฟล์ถัดไปทันที
                         var skipMessage = $"[SKIPPED] File already processed: {actualFileName} at {logTime:u}";
                         Console.WriteLine(skipMessage);
-                        await _fileTracker.RecordFileSkippedAsync(actualFileName, "Duplicate file - already processed and saved to database", cancellationToken);
+                        await _fileTracker.CreateLog(actualFileName, LogStatus.Duplicate, cancellationToken: cancellationToken);
 
                         continue; // ⚡ กลับไปขึ้นต้น Loop ใหม่สำหรับไฟล์ถัดไป
                     }
@@ -80,7 +80,7 @@ namespace AMLO.Project.Services
                     {
                         var errorMsg = $"Invalid filename format. Expected format: {{TypeName}}_{{Version}}_*.csv";
                         Console.WriteLine($"[ERROR] {errorMsg} | File: {actualFileName}");
-                        await _fileTracker.RecordFileFailedAsync(actualFileName, errorMsg, cancellationToken);
+                        await _fileTracker.CreateLog(actualFileName, LogStatus.Fail, notes: errorMsg, cancellationToken: cancellationToken);
                         continue;
                     }
 
@@ -92,12 +92,12 @@ namespace AMLO.Project.Services
                     // This ensures that old versions of this TypeName move to history
                     // only once, not for every record in the CSV
                     Console.WriteLine($"[INFO] Checking if TypeName '{typeName}' exists in amlo_master...");
-                    bool typeNameExists = await _dac.TypeNameExistsAsync(typeName, cancellationToken);
+                    bool typeNameExists = await _dac.GetByType(typeName, cancellationToken);
 
                     if (typeNameExists)
                     {
                         Console.WriteLine($"[INFO] Found existing TypeName '{typeName}' - archiving to amlo_history...");
-                        await _dac.ArchiveToHistoryAsync(typeName, cancellationToken);
+                        await _dac.DeleteByType(typeName, cancellationToken);
                         Console.WriteLine($"[SUCCESS] Archived TypeName '{typeName}' to amlo_history");
                     }
                     else
@@ -106,11 +106,11 @@ namespace AMLO.Project.Services
                     }
 
                     // 2.2 อ่านข้อมูลจากไฟล์
-                    var records = await _csvReader.ReadCsvAsync(actualFileName, cancellationToken);
+                    var records = await _csvReader.GetAll(actualFileName, cancellationToken);
                     if (records == null || !records.Any())
                     {
                         Console.WriteLine($"[Warning] No records found in: {actualFileName}");
-                        await _fileTracker.RecordFileFailedAsync(actualFileName, "No records found in file", cancellationToken);
+                        await _fileTracker.CreateLog(actualFileName, LogStatus.Fail, notes: "No records found in file", cancellationToken: cancellationToken);
                         continue;
                     }
 
@@ -136,12 +136,12 @@ namespace AMLO.Project.Services
                         }
 
                         // ✨ Simply upsert to amlo_master (archive already done above)
-                        await _dac.UpsertDataAsync(dto, cancellationToken);
+                        await _dac.Upsert(dto, cancellationToken);
                         recordCount++;
                     }
 
                     // 2.4 บันทึกว่าไฟล์ใหม่นี้ทำสำเร็จแล้ว
-                    await _fileTracker.RecordFileProcessedAsync(actualFileName, recordCount, cancellationToken: cancellationToken);
+                    await _fileTracker.CreateLog(actualFileName, LogStatus.Success, recordCount: recordCount, cancellationToken: cancellationToken);
                     Console.WriteLine($"[Success] Import completed: {recordCount} records processed from file: {actualFileName}");
                 }
 
@@ -150,7 +150,7 @@ namespace AMLO.Project.Services
             catch (Exception ex)
             {
                 Console.WriteLine($"[Error] ImportCsvAsync failed for {fileName}: {ex.Message}");
-                await _fileTracker.RecordFileFailedAsync(fileName, $"Error: {ex.Message}", cancellationToken);
+                await _fileTracker.CreateLog(fileName, LogStatus.Fail, notes: $"Error: {ex.Message}", cancellationToken: cancellationToken);
                 throw;
             }
         }

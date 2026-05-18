@@ -1,4 +1,3 @@
 <Solution>
-  <Project Path="../Amlo.TestRunnerSync/Amlo.TestRunnerSync.csproj" />
   <Project Path="AMLO.Project.csproj" />
 </Solution>

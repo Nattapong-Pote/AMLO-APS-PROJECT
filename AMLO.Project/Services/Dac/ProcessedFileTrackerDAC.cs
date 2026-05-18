@@ -1,156 +1,144 @@
 using AMLO.Project.Models;
-using Azure;
+using AMLO.Project.Services.SurrealDbProvider;
 using SurrealDb.Net;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text.Json.Serialization;
-using System.Threading;
-using System.Threading.Tasks;
+using SurrealDb.Net.Models;
 
-namespace AMLO.Project.Services.Dac
+namespace AMLO.Project.Services.Dac;
+
+public interface IProcessedFileTrackerDAC
 {
-    public interface IProcessedFileTrackerDAC
+    /// <summary>
+    /// Check if file has already been processed successfully
+    /// </summary>
+    Task<bool> GetByFileName(string fileName, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Log file processing status with unified interface
+    /// </summary>
+    /// <param name="fileName">The name of the file being processed</param>
+    /// <param name="status">The processing status (Success, Duplicate, Fail)</param>
+    /// <param name="recordCount">Number of records processed (for Success status)</param>
+    /// <param name="notes">Additional details about the processing result</param>
+    /// <param name="fileHash">Optional file hash for integrity verification</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    Task CreateLog(string fileName, LogStatus status, int recordCount = 0, string notes = null, string fileHash = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Get all processed file records
+    /// </summary>
+    Task<IEnumerable<ProcessedFileRecord>> GetAll(CancellationToken cancellationToken = default);
+}
+
+public class ProcessedFileTrackerDAC : IProcessedFileTrackerDAC
+{
+    private readonly IDbProvider<ProcessedFileRecord, ProcessedFileRecord> _dbProvider;
+
+    public ProcessedFileTrackerDAC(SurrealDbProviderFactoryBase surrealDbProviderFactory)
     {
-        /// <summary>
-        /// ตรวจสอบว่าไฟล์เคยประมวลผลสำเร็จหรือไม่
-        /// </summary>
-        Task<bool> IsFileAlreadyProcessedAsync(string fileName, CancellationToken cancellationToken = default);
-
-        /// <summary>
-        /// บันทึกประวัติการประมวลผลไฟล์สำเร็จ
-        /// </summary>
-        Task RecordFileProcessedAsync(string fileName, int recordCount, string fileHash = null, CancellationToken cancellationToken = default);
-
-        /// <summary>
-        /// บันทึกประวัติการประมวลผลไฟล์ที่ข้ามไป (Duplicate)
-        /// </summary>
-        Task RecordFileSkippedAsync(string fileName, string reason = "Duplicate file", CancellationToken cancellationToken = default);
-
-        /// <summary>
-        /// บันทึกประวัติการประมวลผลไฟล์ที่ล้มเหลว
-        /// </summary>
-        Task RecordFileFailedAsync(string fileName, string errorMessage, CancellationToken cancellationToken = default);
-
-        /// <summary>
-        /// รับประวัติการประมวลผลทั้งหมด
-        /// </summary>
-        Task<IEnumerable<ProcessedFileRecord>> GetAllProcessedFilesAsync(CancellationToken cancellationToken = default);
+        _dbProvider = surrealDbProviderFactory.Create<ProcessedFileRecord, ProcessedFileRecord>();
     }
 
-    public class ProcessedFileTrackerDAC : IProcessedFileTrackerDAC
+    public async Task<bool> GetByFileName(string fileName, CancellationToken cancellationToken = default)
     {
-        private readonly ISurrealDbClient _dbClient;
-
-        public ProcessedFileTrackerDAC(ISurrealDbClient dbClient)
+        try
         {
-            _dbClient = dbClient;
-        }
+            var escapedFileName = EscapeSurrealQuery(fileName);
+            FormattableString query = $@"
+                SELECT FileName, Status FROM processed_files
+                WHERE FileName = $fileName 
+                AND Status = 'Success'
+                LIMIT 1
+            ";
 
-        public async Task<bool> IsFileAlreadyProcessedAsync(string fileName, CancellationToken cancellationToken = default)
+            var parameters = new Dictionary<string, object?>
+            {
+                { "fileName", escapedFileName }
+            };
+            var result = await _dbProvider.Query<ProcessedFileRecord>(query, parameters, cancellationToken);
+
+            return result != null && result.Any();
+        }
+        catch
         {
-            try
-            {
-                var escapedFileName = EscapeSurrealQuery(fileName);
-                var response = await _dbClient.Query(
-                    $"SELECT FileName, Status FROM processed_files WHERE FileName = {escapedFileName} AND Status = 'Success' LIMIT 1;",
-                    cancellationToken
-                );
-
-                var records = response.GetValue<List<ProcessedFileRecord>>(0);
-
-                return records != null && records.Any();
-            }
-            catch
-            {
-                //ถ้าไม่เจอ หรือ error ให้ถือว่าไฟล์ยังไม่เคยประมวลผล
-                return false;
-            }
+            return false;
         }
+    }
 
-        public async Task RecordFileProcessedAsync(string fileName, int recordCount, string fileHash = null, CancellationToken cancellationToken = default)
+    public async Task CreateLog(string fileName, LogStatus status, int recordCount = 0, string notes = null, string fileHash = null, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+            throw new ArgumentException("File name cannot be empty", nameof(fileName));
+
+        try
         {
-            try
-            {
-                var record = new ProcessedFileRecord
-                {
-                    FileName = fileName,
-                    FileHash = fileHash,
-                    ProcessedDateTime = DateTime.UtcNow,
-                    RecordCount = recordCount,
-                    Status = "Success",
-                    Notes = "Successfully processed"
-                };
+            var statusString = MapLogStatusToString(status);
+            var finalNotes = notes ?? GetDefaultNotes(status, recordCount);
 
-                await _dbClient.Upsert("processed_files", record, cancellationToken);
-            }
-            catch (Exception ex)
+            var record = new ProcessedFileRecord
             {
-                Console.WriteLine($"[ProcessedFileTracker] Error recording processed file: {ex.Message}");
+                FileName = fileName,
+                FileHash = fileHash,
+                ProcessedDateTime = DateTime.UtcNow,
+                RecordCount = recordCount,
+                Status = statusString,
+                Notes = finalNotes
+            };
+
+            // Set RecordId before upsert (required by SurrealDB)
+            // Use FileName as unique identifier in the processed_files table
+            if (record.Id == null || record.Id.Equals(default(RecordId)))
+            {
+                record.Id = RecordId.From("processed_files", Guid.NewGuid().ToString("N"));
             }
+
+            await _dbProvider.Upsert(record, cancellationToken);
+
+            var logLevel = status == LogStatus.Success ? "[SUCCESS]" : status == LogStatus.Duplicate ? "[SKIPPED]" : "[FAILED]";
+            Console.WriteLine($"{logLevel} File '{fileName}' logged with status {statusString}: {finalNotes}");
         }
-
-        public async Task RecordFileSkippedAsync(string fileName, string reason = "Duplicate file", CancellationToken cancellationToken = default)
+        catch (Exception ex)
         {
-            try
-            {
-                var record = new ProcessedFileRecord
-                {
-                    FileName = fileName,
-                    ProcessedDateTime = DateTime.UtcNow,
-                    RecordCount = 0,
-                    Status = "Skipped",
-                    Notes = reason
-                };
-
-                await _dbClient.Upsert("processed_files", record, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[ProcessedFileTracker] Error recording skipped file: {ex.Message}");
-            }
+            Console.WriteLine($"[ERROR] Failed to log file status for '{fileName}': {ex.Message}");
+            throw; // Re-throw so caller knows about the error
         }
+    }
 
-        public async Task RecordFileFailedAsync(string fileName, string errorMessage, CancellationToken cancellationToken = default)
+    public async Task<IEnumerable<ProcessedFileRecord>> GetAll(CancellationToken cancellationToken = default)
+    {
+        try
         {
-            try
-            {
-                var record = new ProcessedFileRecord
-                {
-                    FileName = fileName,
-                    ProcessedDateTime = DateTime.UtcNow,
-                    RecordCount = 0,
-                    Status = "Failed",
-                    Notes = errorMessage
-                };
+            FormattableString query = $@"
+                SELECT * FROM processed_files
+            ";
 
-                await _dbClient.Upsert("processed_files", record, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[ProcessedFileTracker] Error recording failed file: {ex.Message}");
-            }
+            var result = await _dbProvider.Query<ProcessedFileRecord>(query, null, cancellationToken);
+
+            return result ?? new List<ProcessedFileRecord>();
         }
-
-        public async Task<IEnumerable<ProcessedFileRecord>> GetAllProcessedFilesAsync(CancellationToken cancellationToken = default)
+        catch
         {
-            try
-            {
-                // SurrealDB Query ไม่สนับสนุน generic type parameter
-                // ต้องใช้ Dictionary แทนแล้ว cast ไป object
-                var result = await _dbClient.Query($"SELECT * FROM processed_files;", cancellationToken);
-                return result?.Cast<ProcessedFileRecord>() ?? new List<ProcessedFileRecord>();
-            }
-            catch
-            {
-                return new List<ProcessedFileRecord>();
-            }
+            return new List<ProcessedFileRecord>();
         }
+    }
 
-        private string EscapeSurrealQuery(string input)
-        {
-            // Escape single quotes สำหรับ SurrealDB query
-            return input?.Replace("'", "''") ?? string.Empty;
-        }
+    private string MapLogStatusToString(LogStatus status) => status switch
+    {
+        LogStatus.Success => "Success",
+        LogStatus.Duplicate => "Skipped",
+        LogStatus.Fail => "Failed",
+        _ => "Unknown"
+    };
+
+    private string GetDefaultNotes(LogStatus status, int recordCount) => status switch
+    {
+        LogStatus.Success => $"Successfully processed {recordCount} records",
+        LogStatus.Duplicate => "Duplicate file - already processed and saved to database",
+        LogStatus.Fail => "Processing failed - see error details in logs",
+        _ => "Unknown status"
+    };
+
+    private string EscapeSurrealQuery(string input)
+    {
+        return input?.Replace("'", "''") ?? string.Empty;
     }
 }

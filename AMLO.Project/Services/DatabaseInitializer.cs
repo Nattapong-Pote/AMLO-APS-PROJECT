@@ -1,4 +1,5 @@
 using SurrealDb.Net;
+using SurrealDb.Net.Models.Auth;
 using System;
 using System.Threading.Tasks;
 
@@ -36,7 +37,8 @@ namespace AMLO.Project.Services
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[WARN] Database initialization warning: {ex.Message}");
+                Console.WriteLine($"[ERROR] Database initialization failed: {ex.Message}");
+                throw;
             }
         }
 
@@ -52,10 +54,8 @@ namespace AMLO.Project.Services
             }
             catch (Exception ex) when (ex.Message.Contains("Cannot find") || ex.Message.Contains("not found"))
             {
-                Console.WriteLine($"[WARN] Table '{tableName}' not found");
+                Console.WriteLine($"[WARN] Table '{tableName}' not found, creating schema...");
 
-                // SurrealDB จะสร้างตารางอัตโนมัติเมื่อเสียบข้อมูลครั้งแรก
-                // แต่เราสามารถ define schema ล่วงหน้าได้ด้วยการรัน DEFINE TABLE command
                 try
                 {
                     var defineQuery = GetTableDefinitionQuery(tableName);
@@ -64,15 +64,21 @@ namespace AMLO.Project.Services
                 }
                 catch (Exception defineEx)
                 {
-                    Console.WriteLine($"[INFO] Table '{tableName}' will be created on first insert: {defineEx.Message}");
+                    Console.WriteLine($"[INFO] Table '{tableName}' will be auto-created on first insert: {defineEx.Message}");
                 }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ERROR] Failed to initialize table '{tableName}': {ex.Message}");
+                throw;
             }
         }
 
         private static string GetTableDefinitionQuery(string tableName)
         {
             // Define schema for both amlo_master and amlo_history tables
-            // Both have identical schema
+            // SCHEMALESS allows flexibility, but DEFINE FIELD ensures type consistency
+            // PERMISSIONS use (1 = 1) to ALLOW all authenticated users
             return $@"
                 DEFINE TABLE {tableName} SCHEMALESS
                 PERMISSIONS
@@ -81,7 +87,6 @@ namespace AMLO.Project.Services
                     FOR update ALLOW (1 = 1)
                     FOR delete ALLOW (1 = 1);
 
-                -- Define fields to ensure consistency
                 DEFINE FIELD TypeName ON TABLE {tableName} TYPE string ASSERT string::len($value) > 0;
                 DEFINE FIELD Version ON TABLE {tableName} TYPE string ASSERT string::len($value) > 0;
                 DEFINE FIELD Data ON TABLE {tableName} TYPE object;
@@ -89,7 +94,6 @@ namespace AMLO.Project.Services
                 DEFINE FIELD ArchivedAt ON TABLE {tableName} TYPE datetime OPTIONAL;
                 DEFINE FIELD IsArchived ON TABLE {tableName} TYPE bool DEFAULT false;
 
-                -- Create index for faster queries
                 DEFINE INDEX idx_typename_active ON TABLE {tableName} COLUMNS TypeName, IsArchived;
                 DEFINE INDEX idx_archived_at ON TABLE {tableName} COLUMNS ArchivedAt;
             ";

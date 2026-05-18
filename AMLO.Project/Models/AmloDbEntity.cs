@@ -2,11 +2,13 @@
 
 namespace AMLO.Project.Models
 {
-    public class AmloDbEntity
+    public class AmloDbEntity : IRecord
     {
+        public RecordId Id { get; set; }
+
         public required string TypeName { get; set; }
         public required string Version { get; set; }
-        public required Dictionary<string, string> Data { get; set; }
+        public required Dictionary<string, string> Data { get; set; } = new();
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
         public DateTime? ArchivedAt { get; set; }
         public bool IsArchived { get; set; }

@@ -1,11 +1,30 @@
+using SurrealDb.Net.Models;
+
 namespace AMLO.Project.Models
 {
+    /// <summary>
+    /// Enumeration for file processing log status
+    /// </summary>
+    public enum LogStatus
+    {
+        /// <summary>File processing failed</summary>
+        Fail,
+
+        /// <summary>File is duplicate or already processed</summary>
+        Duplicate,
+
+        /// <summary>File processed successfully</summary>
+        Success
+    }
+
     /// <summary>
     /// บันทึกประวัติไฟล์ที่ประมวลผลแล้ว
     /// เพื่อป้องกันการประมวลผลไฟล์เดิมซ้ำ
     /// </summary>
-    public class ProcessedFileRecord
+    public class ProcessedFileRecord : IRecord
     {
+        public RecordId Id { get; set; }
+
         /// <summary>
         /// ชื่อไฟล์ที่ประมวลผล (เช่น Test_Output_Single.csv)
         /// </summary>
