@@ -1,4 +1,4 @@
-using AMLO.Project.Helpers;
+﻿using AMLO.Project.Helpers;
 using Mapster;
 using SurrealDb.Net;
 using SurrealDb.Net.Models;
@@ -72,6 +72,10 @@ public interface IDbProvider<TsurrealModel, TamloModel>
     /// </summary>
     Task<IEnumerable<Ts>?> Query<Ts>(FormattableString qry, IReadOnlyDictionary<string, object?>? parameters = default, CancellationToken cancellationToken = default);
     Task<Ts?> QueryOne<Ts>(FormattableString qry, IReadOnlyDictionary<string, object?>? parameters = default, CancellationToken cancellationToken = default) where Ts : class;
+
+    Task<IEnumerable<TamloModel>> ListAsAmloModelAsync(CancellationToken cancellationToken = default);
+    Task<TamloModel> CreateAsAmloModelAsync(TamloModel model, CancellationToken cancellationToken = default);
+    Task<TamloModel> UpdateAsAmloModelAsync(string id, Dictionary<string, object?> data, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -219,4 +223,25 @@ public class DbProvider<TsurrealModel, TamloModel> : IDbProvider<TsurrealModel, 
         var data = (await _surrealDbSession.RawQuery(qry.ToString(), parameters, cancellationToken)).GetValue<IEnumerable<TsurrealModel>>(qryIndex).FirstOrDefault();
         return data?.Adapt<TamloModel>()!;
     }
+
+
+    public async Task<IEnumerable<TamloModel>> ListAsAmloModelAsync(CancellationToken cancellationToken = default)
+    {
+        var entities = await _surrealDbSession.Select<TsurrealModel>(Table, cancellationToken);
+        return entities.Adapt<IEnumerable<TamloModel>>(); // ใช้ Mapster แมป
+    }
+
+    public async Task<TamloModel> CreateAsAmloModelAsync(TamloModel entity, CancellationToken cancellationToken = default)
+    {
+        var surrealEntity = entity.Adapt<TsurrealModel>();
+        var createdEntity = await _surrealDbSession.Create<TsurrealModel>(Table, surrealEntity, cancellationToken);
+        return createdEntity.Adapt<TamloModel>();
+    }
+    public async Task<TamloModel> UpdateAsAmloModelAsync(string id, Dictionary<string, object?> data, CancellationToken cancellationToken)
+    {
+        var recordId = RecordId.From(Table, id);
+        var x = await _surrealDbSession.Merge<TsurrealModel>(recordId, data, cancellationToken);
+        return x.Adapt<TamloModel>();
+    }
+
 }

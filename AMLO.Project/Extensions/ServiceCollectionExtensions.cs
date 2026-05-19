@@ -35,6 +35,10 @@ namespace AMLO.Project.Extensions
             // ลงทะเบียนคลาสจัดการข้อมูลในระบบส่วนที่ 2
             services.AddScoped<IProcessDataServiceDAC, ProcessDataServiceDAC>();
             services.AddScoped<IProcessedFileTrackerDAC, ProcessedFileTrackerDAC>();
+            services.AddScoped<IAmloSyncVersionDAC, AmloSyncVersionDAC>();
+            services.AddScoped<IAmloSyncService, AmloSyncService>();
+            services.AddScoped<ICsvMergeService, CsvMergeService>();
+            services.AddScoped<IUploadToAzureBlobService, UploadToAzureBlobService>();
 
             // ลงทะเบียนตัวอ่านไฟล์ข้อมูลแยกตามรูปแบบของ Configuration
             services.AddScoped<ICsvFileReaderServiceDAC>(provider =>
