@@ -4,7 +4,7 @@ using System.Text;
 
 namespace AMLO.Project.Models
 {
-    internal class AmloEndpoint
+    public class AmloEndpoint
     {
         public string Name { get; set; }
         public string VersionEndpoint { get; set; }
@@ -12,9 +12,8 @@ namespace AMLO.Project.Models
         public string ListName { get; set; }
 
     }
-    internal class AmloConfig
+    public class AmloConfig
     {
         public List<AmloEndpoint> Endpoints { get; set; }
-
     }
 }
