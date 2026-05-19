@@ -5,12 +5,18 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 
-namespace AMLO.Project.Services.Orchestration
+namespace AMLO.Project.Services
 {
-    public class CsvMergeService
+    public interface ICsvMergeService
     {
-        public void MergeExtractedCsvFiles(string extractedFolderPath, string outputSingleCsvPath)
+        void MergeExtractedCsvFiles(string extractedFolderPath, string fileNameCombine, string versionCombine);
+    }
+    public class CsvMergeService : ICsvMergeService
+    {
+        public void MergeExtractedCsvFiles(string extractedFolderPath, string amloName, string amloVersion)
         {
+            string fileNameCombine = $"{amloName}_{amloVersion}_{DateTime.Now:yyyyMMddHH}_combine.csv";
+            string outputSingleCsvPath = Path.Combine(extractedFolderPath, fileNameCombine);
             var mergedData = new Dictionary<string, Dictionary<string, string>>();
             List<string> allColumns = ["ENTITY_ID"]; // C# 12+ Collection Expression
 
