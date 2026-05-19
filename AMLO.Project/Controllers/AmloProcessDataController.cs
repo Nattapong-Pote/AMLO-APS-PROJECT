@@ -1,5 +1,6 @@
 ﻿using AMLO.Project.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Text;
@@ -11,26 +12,29 @@ namespace AMLO.Project.Controllers
     public class AmloProcessDataController : ControllerBase
     {
         private readonly DataProcessingService _processService;
+        private readonly ILogger<AmloProcessDataController> _logger;
 
         // รับ DataProcessingService ผ่าน Constructor (Dependency Injection)
-        public AmloProcessDataController(DataProcessingService processService)
+        public AmloProcessDataController(
+            DataProcessingService processService,
+            ILogger<AmloProcessDataController> logger)
         {
             _processService = processService;
+            _logger = logger;
         }
 
         /// <summary>
         /// API สำหรับสั่งรันการนำเข้าไฟล์ CSV
-        /// HTTP POST: /api/sync/import-csv
+        /// HTTP POST: /api/processData/import-csv
         /// </summary>
         [HttpPost("import-csv")]
         public async Task<IActionResult> ImportCsvAsync()
         {
             try
             {
-                // สามารถใช้ Log แทน Console.WriteLine ได้ในอนาคต
-                Console.WriteLine($"[API] Starting CSV import ...");
+                _logger.LogInformation($"[API] Starting CSV import ...");
 
-                // เรียกใช้งาน Service ที่เราย้ายมาจาก Program.cs
+                // เรียกใช้งาน Service
                 await _processService.ImportCsvAsync("*.csv");
 
                 return Ok(new
@@ -41,7 +45,7 @@ namespace AMLO.Project.Controllers
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[API ERROR] {ex.Message}");
+                _logger.LogError(ex, $"[API ERROR] {ex.Message}");
                 // หากเกิด Error จะส่ง HTTP Status 500 กลับไปให้ฝั่งที่เรียก API
                 return StatusCode(500, new
                 {

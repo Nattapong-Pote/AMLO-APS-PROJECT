@@ -1,3 +1,5 @@
+using AMLO.Project.Controllers;
+using Microsoft.Extensions.Logging;
 using SurrealDb.Net;
 using SurrealDb.Net.Models.Auth;
 using System;
@@ -15,17 +17,21 @@ namespace AMLO.Project.Services
         private readonly ISurrealDbSession _dbClient;
         private const string AmloMasterTableName = "amlo_master";
         private const string AmloHistoryTableName = "amlo_history";
+        private readonly ILogger<DatabaseInitializer> _logger;
 
-        public DatabaseInitializer(ISurrealDbSession dbClient)
+        public DatabaseInitializer(
+            ISurrealDbSession dbClient,
+            ILogger<DatabaseInitializer> logger)
         {
             _dbClient = dbClient;
+            _logger = logger;
         }
 
         public async Task InitializeAsync()
         {
             try
             {
-                Console.WriteLine("[*] Initializing SurrealDB...");
+                _logger.LogInformation("Initializing SurrealDB...");
 
                 // Initialize amlo_master table
                 await InitializeTableAsync(AmloMasterTableName);
@@ -33,11 +39,11 @@ namespace AMLO.Project.Services
                 // Initialize amlo_history table
                 await InitializeTableAsync(AmloHistoryTableName);
 
-                Console.WriteLine("[OK] Database initialization completed!");
+                _logger.LogInformation("[OK] Database initialization completed!");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[ERROR] Database initialization failed: {ex.Message}");
+                _logger.LogError(ex, $"[ERROR] Database initialization failed: {ex.Message}");
                 throw;
             }
         }
@@ -46,30 +52,30 @@ namespace AMLO.Project.Services
         {
             try
             {
-                Console.WriteLine($"[*] Verifying table '{tableName}' exists...");
+                _logger.LogInformation($"[*] Verifying table '{tableName}' exists...");
 
                 // Simple test: try to select from table
                 var records = await _dbClient.Select<dynamic>(tableName, default);
-                Console.WriteLine($"[OK] Table '{tableName}' exists and is accessible!");
+                _logger.LogInformation($"[OK] Table '{tableName}' exists and is accessible!");
             }
             catch (Exception ex) when (ex.Message.Contains("Cannot find") || ex.Message.Contains("not found"))
             {
-                Console.WriteLine($"[WARN] Table '{tableName}' not found, creating schema...");
+                _logger.LogWarning($"[WARN] Table '{tableName}' not found, creating schema...");
 
                 try
                 {
                     var defineQuery = GetTableDefinitionQuery(tableName);
                     await _dbClient.RawQuery(defineQuery, default);
-                    Console.WriteLine($"[OK] Table '{tableName}' schema defined!");
+                    _logger.LogInformation($"[OK] Table '{tableName}' schema defined!");
                 }
                 catch (Exception defineEx)
                 {
-                    Console.WriteLine($"[INFO] Table '{tableName}' will be auto-created on first insert: {defineEx.Message}");
+                    _logger.LogInformation($"[INFO] Table '{tableName}' will be auto-created on first insert: {defineEx.Message}");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[ERROR] Failed to initialize table '{tableName}': {ex.Message}");
+                _logger.LogError(ex, $"[ERROR] Failed to initialize table '{tableName}': {ex.Message}");
                 throw;
             }
         }

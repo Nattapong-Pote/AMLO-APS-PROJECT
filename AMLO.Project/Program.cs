@@ -47,15 +47,13 @@ internal static class Program
             db: dbDatabase
         );
 
-        builder.Services.AddScoped<DataProcessingService>();
-
         using var host = builder.Build();
         using var scope = host.Services.CreateScope();
 
         try
         {
             // Step 2: Initialize Database
-            Console.WriteLine("[STEP 2] Initializing database...");
+            Console.WriteLine("[STEP] Initializing database...");
             var dbInitializer = scope.ServiceProvider.GetRequiredService<IDatabaseInitializer>();
             await dbInitializer.InitializeAsync();
             Console.WriteLine("[✓] Database initialized!\n");

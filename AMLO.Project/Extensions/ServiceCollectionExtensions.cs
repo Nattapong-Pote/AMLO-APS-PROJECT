@@ -46,6 +46,8 @@ namespace AMLO.Project.Extensions
                 return new LocalCsvFileReaderService();
             });
 
+            services.AddScoped<DataProcessingService>();
+
             return services;
         }
     }
