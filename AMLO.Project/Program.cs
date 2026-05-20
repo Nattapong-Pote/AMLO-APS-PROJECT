@@ -1,14 +1,10 @@
 using AMLO.Project.Extensions;
 using AMLO.Project.Services;
-using AMLO.Project.Services.Dac;
-using AMLO.Project.Services.SurrealDbProvider;
+using Azure.Identity;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
-using SurrealDb.Net;
-using SurrealDb.Net.Models.Auth;
-using Azure.Identity;
 
 namespace AMLO.Project;
 
@@ -39,28 +35,10 @@ internal static class Program
         builder.Services.AddHttpClient();
         builder.Services.AddMemoryCache();
 
-        // Configuration
-        const string dbUrl = "http://127.0.0.1:8000";
-        const string dbUser = "root";
-        const string dbPass = "root";
-        const string dbNamespace = "ns";
-        const string dbDatabase = "db";
-        const string csvBlobPattern = "*.csv";
-
-        Console.WriteLine($"[CONFIG] Database URL: {dbUrl}");
-        Console.WriteLine($"[CONFIG] Namespace: {dbNamespace} | Database: {dbDatabase}");
-        Console.WriteLine($"[CONFIG] Blob/File Pattern: {csvBlobPattern}\n");
-
         builder.Services.AddSingleton<IConfiguration>(builder.Configuration);
 
         // Register AMLO services
-        builder.Services.AddAmloProject(
-            dbUrl: dbUrl,
-            user: dbUser,
-            pass: dbPass,
-            ns: dbNamespace,
-            db: dbDatabase
-        );
+        builder.Services.AddAmloProject(builder.Configuration);
 
         using var host = builder.Build();
         using var scope = host.Services.CreateScope();
