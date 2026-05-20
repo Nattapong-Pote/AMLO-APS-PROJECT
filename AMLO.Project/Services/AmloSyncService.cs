@@ -21,14 +21,14 @@ namespace AMLO.Project.Services
     }
     public class AmloSyncService : IAmloSyncService, IDisposable
     {
-        private readonly IConfiguration config;
+        //private readonly IConfiguration config;
         private readonly IAmloSyncVersionDAC amloVersionRecordDAC;
         private readonly IMemoryCache memoryCache;
         private readonly ICsvMergeService csvMergeService;
         private readonly IUploadToAzureBlobService uploadToAzureBlobService;
 
         // Constants for paths and configuration keys
-        private const int CACHE_TTL_HOURS = 12;
+        private const int CACHE_TTL_HOURS = 6;
         private const string CACHE_KEY_PREFIX = "amlo_list_";
         private const string DATA_FOLDER = "Data";
         private const string AMLO_FILES_FOLDER = "AmloFiles";
@@ -36,12 +36,11 @@ namespace AMLO.Project.Services
         // ตัวแปรสำหรับแชร์ FlurlClient และตัวควบคุมการเข้าถึง
         private IFlurlClient? flurlClient;
         private readonly SemaphoreSlim clientLock = new SemaphoreSlim(1, 1);
-        private List<AmloEndpoint> amloConfig;
+        private AmloConfig amloConfig;
 
         public AmloSyncService(IAmloSyncVersionDAC amloVersionRecordDAC, IConfiguration config, IMemoryCache memoryCache, ICsvMergeService csvMergeService, IUploadToAzureBlobService uploadToAzureBlobService)
         {
-            amloConfig = config.GetSection(nameof(AmloConfig)).Get<AmloConfig>().Endpoints;
-            this.config = config ?? throw new ArgumentNullException(nameof(config));
+            amloConfig = config.GetSection(nameof(AmloConfig)).Get<AmloConfig>();
 
             this.amloVersionRecordDAC = amloVersionRecordDAC ?? throw new ArgumentNullException(nameof(amloVersionRecordDAC));
             this.memoryCache = memoryCache ?? throw new ArgumentNullException(nameof(memoryCache));
@@ -55,29 +54,45 @@ namespace AMLO.Project.Services
         // ฟังก์ชันสำหรับตรวจสอบความครบถ้วนของการตั้งค่าใน IConfiguration
         private void ValidateConfiguration()
         {
-            var requiredSettings = new[]
+            if (amloConfig == null)
             {
-                //"Amlo:BaseUrl",
-                "Amlo:CertFileName",
-                "Amlo:KeyFileName",
-                "Amlo:Keypassword",
-                "Amlo:CaPassword",
-                "Amlo:Username",
-                "Amlo:Password",
-                "Amlo:XApiKey"
+                throw new InvalidOperationException("AmloConfig section is missing from configuration.");
+            }
+            // Validate required string properties
+            var requiredFields = new Dictionary<string, string>
+            {
+                { nameof(amloConfig.Username), amloConfig.Username },
+                { nameof(amloConfig.Password), amloConfig.Password },
+                { nameof(amloConfig.XApiKey), amloConfig.XApiKey },
+                { nameof(amloConfig.CaPassword), amloConfig.CaPassword },
+                { nameof(amloConfig.Keypassword), amloConfig.Keypassword },
+                { nameof(amloConfig.CertBase64), amloConfig.CertBase64 },
+                { nameof(amloConfig.KeyBase64), amloConfig.KeyBase64 }
             };
-            foreach (var setting in requiredSettings)
+
+            foreach (var field in requiredFields)
             {
-                if (string.IsNullOrEmpty(config[setting]))
+                if (string.IsNullOrEmpty(field.Value))
                 {
-                    throw new InvalidOperationException($"Required configuration setting '{setting}' is missing or empty.");
+                    throw new InvalidOperationException($"Required configuration 'AmloConfig:{field.Key}' is missing or empty.");
                 }
             }
 
-            // Validate Endpoints instead of ListNames
-            if (amloConfig == null || !amloConfig.Any())
+            // Validate Endpoints
+            if (amloConfig.Endpoints == null || !amloConfig.Endpoints.Any())
             {
-                throw new InvalidOperationException("Required configuration setting 'AmloConfig:Endpoints' is missing or empty.");
+                throw new InvalidOperationException("AmloConfig:Endpoints is missing or empty.");
+            }
+
+            foreach (var endpoint in amloConfig.Endpoints)
+            {
+                if (string.IsNullOrEmpty(endpoint.Name) ||
+                    string.IsNullOrEmpty(endpoint.VersionEndpoint) ||
+                    string.IsNullOrEmpty(endpoint.DataEndpoint) ||
+                    string.IsNullOrEmpty(endpoint.ListName))
+                {
+                    throw new InvalidOperationException($"Endpoint configuration for '{endpoint.Name}' is incomplete.");
+                }
             }
         }
 
@@ -93,22 +108,27 @@ namespace AMLO.Project.Services
 
                 var handler = new HttpClientHandler();
 
-                var certPass = config["Amlo:CaPassword"];
-                string certFileName = config["Amlo:CertFileName"];
-                string projectRoot = Directory.GetParent(AppContext.BaseDirectory).Parent.Parent.Parent.FullName;
-                string certPath = Path.Combine(projectRoot, DATA_FOLDER, certFileName);
+                string certBase64 = amloConfig.CertBase64;
+                var certPass = amloConfig.CaPassword;
 
-                if (File.Exists(certPath))
+                if (!string.IsNullOrEmpty(certBase64))
                 {
-                    var certificate = new X509Certificate2(certPath, certPass);
+                    // แปลงข้อความตัวอักษรกลับมาเป็น Byte Array ใน Memory
+                    byte[] certBytes = Convert.FromBase64String(certBase64);
+
+                    // โหลด Certificate เข้าสู่ Object ตรงๆ โดยระบุ StorageFlags แบบ DefaultKeySet
+                    // เพื่อให้ Windows สามารถจัดการคีย์ของใบรับรองได้อย่างเหมาะสม
+                    var certificate = new X509Certificate2(certBytes, certPass, X509KeyStorageFlags.DefaultKeySet);
+
+                    // นำวัตถุ certificate นี้ไปผูกเข้ากับ Flurl หรือ HttpClient ได้ทันทีครับ
                     handler.ClientCertificates.Add(certificate);
                 }
 
                 // สร้าง HttpClient พื้นฐานที่แนบ Cert แล้ว และหุ้มด้วย FlurlClient พร้อมตั้งค่า Headers/Auth
                 var httpClient = new HttpClient(handler);
                 flurlClient = new FlurlClient(httpClient)
-                    .WithHeader("X-API-Key", config["Amlo:XApiKey"])
-                    .WithBasicAuth(config["Amlo:Username"], config["Amlo:Password"]);
+                    .WithHeader("X-API-Key", amloConfig.XApiKey)
+                    .WithBasicAuth(amloConfig.Username, amloConfig.Password);
 
                 return flurlClient;
             }
@@ -130,8 +150,8 @@ namespace AMLO.Project.Services
             try
             {
                 // Step 1: ดึง amloConfig เฉพาะ "Name" มาใส่เป็น Array
-                var listNames = amloConfig.Select(e => e.Name).ToArray();
-                var endpointMap = amloConfig.ToDictionary(e => e.Name, e => e);
+                var listNames = amloConfig.Endpoints.Select(e => e.Name).ToArray();
+                var endpointMap = amloConfig.Endpoints.ToDictionary(e => e.Name, e => e);
 
                 // Step 2: ดึงข้อมูล Version จาก AMLO API แบบ parallel
                 var versionsFromAMLO = await GetVersionAllTypeAsync(listNames, endpointMap);
@@ -274,11 +294,10 @@ namespace AMLO.Project.Services
                         return $"Decoded string is empty for {e.Key}";
                     }
 
-                    string keyFileName = config["Amlo:KeyFileName"];
-                    string keyPassword = config["Amlo:Keypassword"];
-                    string keyPath = Path.Combine(projectRoot, DATA_FOLDER, keyFileName);
-
-                    if (File.Exists(keyPath))
+                    string keyBase64 = amloConfig.KeyBase64;
+                    string keyPassword = amloConfig.Keypassword;
+                    
+                    if (!string.IsNullOrEmpty(keyBase64))
                     {
                         try
                         {
@@ -288,40 +307,45 @@ namespace AMLO.Project.Services
 
                             await File.WriteAllTextAsync(encryptedFilePath, decodedString);
 
-                            FileInfo privateKey = new FileInfo(keyPath);
-                            EncryptionKeys encryptionKeys = new EncryptionKeys(privateKey, keyPassword);
+                            // แปลงค่าข้อความ Base64 กลับมาเป็นชุดไบต์ (Byte Array)
+                            byte[] keyBytes = Convert.FromBase64String(keyBase64);
 
-                            using (PGP pgp = new PGP(encryptionKeys))
+                            // หุ้มคีย์ด้วย MemoryStream และส่งเข้าไปถอดรหัสใน PGP Core
+                            using (var keyStream = new MemoryStream(keyBytes))
                             {
-                                FileInfo encryptPath = new FileInfo(encryptedFilePath);
-                                FileInfo decryptPath = new FileInfo(Path.Combine(amloFilesPath, fileNameTxt.Replace(".pgp", "", StringComparison.InvariantCultureIgnoreCase)));
+                                EncryptionKeys encryptionKeys = new EncryptionKeys(keyStream, keyPassword);
 
-                                await pgp.DecryptFileAsync(encryptPath, decryptPath);
-
-                                if (!Directory.Exists(folderPath))
+                                using (PGP pgp = new PGP(encryptionKeys))
                                 {
-                                    Directory.CreateDirectory(folderPath);
-                                }
-                                ZipFile.ExtractToDirectory(decryptPath.FullName, folderPath, overwriteFiles: true);
+                                    FileInfo encryptPath = new FileInfo(encryptedFilePath);
+                                    FileInfo decryptPath = new FileInfo(Path.Combine(amloFilesPath, fileNameTxt.Replace(".pgp", "", StringComparison.InvariantCultureIgnoreCase)));
 
-                                //combine csv files in folder to one csv file
-                                var versionRecord = versionsFromAMLO.FirstOrDefault(v => v.Name == e.Key);
-                                if (versionRecord != null)
-                                {
-                                    csvMergeService.MergeExtractedCsvFiles(folderPath, versionRecord.Name, versionRecord.VersionNumber);
+                                    await pgp.DecryptFileAsync(encryptPath, decryptPath);
 
-                                    var combineFiles = Directory.GetFiles(folderPath, "*_combine.csv");
-                                    foreach (var file in combineFiles)
+                                    if (!Directory.Exists(folderPath))
                                     {
-                                        // เรียกใช้ฟังก์ชันอัปโหลด Azure Blob Storage
-                                        await uploadToAzureBlobService.UploadToAzureBlobAsync(file);
+                                        Directory.CreateDirectory(folderPath);
                                     }
+                                    ZipFile.ExtractToDirectory(decryptPath.FullName, folderPath, overwriteFiles: true);
 
-                                    // Clean up individual csv files หลังจากรวมเสร็จแล้ว (เหลือแค่ไฟล์ *_combine.csv)
-                                    CleanUpFiles(folderPath, ".csv", "_combine.csv");
+                                    //combine csv files in folder to one csv file
+                                    var versionRecord = versionsFromAMLO.FirstOrDefault(v => v.Name == e.Key);
+                                    if (versionRecord != null)
+                                    {
+                                        csvMergeService.MergeExtractedCsvFiles(folderPath, versionRecord.Name, versionRecord.VersionNumber);
 
+                                        var combineFiles = Directory.GetFiles(folderPath, "*_combine.csv");
+                                        foreach (var file in combineFiles)
+                                        {
+                                            // เรียกใช้ฟังก์ชันอัปโหลด Azure Blob Storage
+                                            await uploadToAzureBlobService.UploadToAzureBlobAsync(file);
+                                        }
+
+                                        // Clean up individual csv files หลังจากรวมเสร็จแล้ว (เหลือแค่ไฟล์ *_combine.csv)
+                                        CleanUpFiles(folderPath, ".csv", "_combine.csv");
+                                    }
                                 }
-                            }
+                            } // keyStream จะถูกทำลายและคืนสิทธิ์แรมทันทีเมื่อหลุดวงเล็บนี้
 
                             downloadResults[e.Key] = true;
                             return $"Downloaded and stored {e.Key}";
@@ -329,13 +353,13 @@ namespace AMLO.Project.Services
                         catch (Exception ex)
                         {
                             downloadResults[e.Key] = false;
-                            return $"Decryption failed for {e.Key}";
+                            return $"Decryption failed for {e.Key}: {ex.Message}";
                         }
                     }
                     else
                     {
                         downloadResults[e.Key] = false;
-                        return $"Key file not found for {e.Key}";
+                        return $"Key string from Key Vault is missing or empty for {e.Key}";
                     }
                 }
                 catch (Exception ex)

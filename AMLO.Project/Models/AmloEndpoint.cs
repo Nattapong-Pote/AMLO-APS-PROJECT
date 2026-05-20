@@ -11,4 +11,11 @@ public class AmloEndpoint
 public class AmloConfig
 {
     public List<AmloEndpoint> Endpoints { get; set; }
+    public string Username { get; set; }
+    public string Password { get; set; }
+    public string XApiKey { get; set; }
+    public string CaPassword { get; set; }
+    public string Keypassword { get; set; }
+    public string CertBase64 { get; set; }
+    public string KeyBase64 { get; set; }
 }

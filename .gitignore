@@ -363,3 +363,4 @@ MigrationBackup/
 FodyWeavers.xsd
 /AMLO.Project/Data/determina.key
 /AMLO.Project/appsettings.Development.json
+/AMLO.Project/Data/AmloFiles
