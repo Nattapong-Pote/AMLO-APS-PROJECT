@@ -19,8 +19,8 @@ internal static class Program
         // ตรวจสอบว่าเป็น Environment ไหน (ถ้าเป็น Production หรือมี URI ค่อยเปิดใช้ Key Vault)
         if (builder.Environment.IsProduction() || builder.Environment.IsDevelopment())
         {
-            var keyVaultUri = "https://amlo-production-kv.vault.azure.net/";
-
+            var keyVaultUri = "https://amlo-kv.vault.azure.net/";
+        
             // แนะนำใช้ DefaultAzureCredential ซึ่งปลอดภัยและยืดหยุ่นสูง:
             // - บน Local (Development): จะใช้ Identity จาก Azure CLI, VS Code หรือ Visual Studio ที่คุณ Login ไว้
             // - บน Production: จะใช้ Managed Identity ของ Azure App Service / VM ได้ทันทีโดยไม่ต้องใส่ Client Secret ในโค้ด
