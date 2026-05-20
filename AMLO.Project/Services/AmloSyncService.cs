@@ -17,7 +17,6 @@ namespace AMLO.Project.Services
     public interface IAmloSyncService
     {
         Task<string> SyncAllParallelAsync();
-        Task<List<AmloVersionRecordDto>> GetVersionAllTypeAsync(string[] listNames);
         Task<List<AmloVersionRecordDto>> GetAllVersionFromDbAsync();
     }
     public class AmloSyncService : IAmloSyncService, IDisposable
@@ -37,13 +36,13 @@ namespace AMLO.Project.Services
         // ตัวแปรสำหรับแชร์ FlurlClient และตัวควบคุมการเข้าถึง
         private IFlurlClient? flurlClient;
         private readonly SemaphoreSlim clientLock = new SemaphoreSlim(1, 1);
+        private List<AmloEndpoint> amloConfig;
 
         public AmloSyncService(IAmloSyncVersionDAC amloVersionRecordDAC, IConfiguration config, IMemoryCache memoryCache, ICsvMergeService csvMergeService, IUploadToAzureBlobService uploadToAzureBlobService)
         {
-            var amloConfig = config.GetSection(nameof(AmloConfig)).Get<AmloConfig>();
-
-
+            amloConfig = config.GetSection(nameof(AmloConfig)).Get<AmloConfig>().Endpoints;
             this.config = config ?? throw new ArgumentNullException(nameof(config));
+
             this.amloVersionRecordDAC = amloVersionRecordDAC ?? throw new ArgumentNullException(nameof(amloVersionRecordDAC));
             this.memoryCache = memoryCache ?? throw new ArgumentNullException(nameof(memoryCache));
             this.csvMergeService = csvMergeService ?? throw new ArgumentNullException(nameof(csvMergeService));
@@ -58,7 +57,7 @@ namespace AMLO.Project.Services
         {
             var requiredSettings = new[]
             {
-                "Amlo:BaseUrl",
+                //"Amlo:BaseUrl",
                 "Amlo:CertFileName",
                 "Amlo:KeyFileName",
                 "Amlo:Keypassword",
@@ -75,12 +74,10 @@ namespace AMLO.Project.Services
                 }
             }
 
-            // Validate ListNames separately since it's a complex object (Dictionary), not a simple string
-            var listNamesSection = config.GetSection("Amlo:ListNames");
-            var listNamesDict = listNamesSection.Get<Dictionary<string, string>>();
-            if (listNamesDict == null || !listNamesDict.Any())
+            // Validate Endpoints instead of ListNames
+            if (amloConfig == null || !amloConfig.Any())
             {
-                throw new InvalidOperationException("Required configuration setting 'Amlo:ListNames' is missing or empty.");
+                throw new InvalidOperationException("Required configuration setting 'AmloConfig:Endpoints' is missing or empty.");
             }
         }
 
@@ -132,20 +129,12 @@ namespace AMLO.Project.Services
         {
             try
             {
-                // Step 1: Load listNames จาก config รูปแบบใหม่ (Dictionary)
-                // จำเป็นต้องใช้ Microsoft.Extensions.Configuration.Binder (ปกติมีให้อยู่แล้วใน .NET Core)
-                var listNamesDict = config.GetSection("Amlo:ListNames").Get<Dictionary<string, string>>();
+                // Step 1: ดึง amloConfig เฉพาะ "Name" มาใส่เป็น Array
+                var listNames = amloConfig.Select(e => e.Name).ToArray();
+                var endpointMap = amloConfig.ToDictionary(e => e.Name, e => e);
 
-                if (listNamesDict == null || !listNamesDict.Any())
-                {
-                    return JsonSerializer.Serialize(new { error = "ListNames configuration is missing" });
-                }
-
-                // ดึงเฉพาะ "Key" มาใส่เป็น Array (จะได้เป็น: ["freeze-05", "al-qaida", "taliban", ...])
-                var listNames = listNamesDict.Keys.ToArray();
-
-                // Step 2: ดึงข้อมูล Version จาก AMLO API แบบ parallel (pass listNames)
-                var versionsFromAMLO = await GetVersionAllTypeAsync(listNames);
+                // Step 2: ดึงข้อมูล Version จาก AMLO API แบบ parallel
+                var versionsFromAMLO = await GetVersionAllTypeAsync(listNames, endpointMap);
 
                 // Step 3: Map version data
                 var versionMap = new Dictionary<string, string>();
@@ -160,16 +149,14 @@ namespace AMLO.Project.Services
                 // Step 4: เปรียบเทียบ Version และเก็บ list ที่อัปเดต
                 var comparisonTasks = listNames.Select(async name =>
                 {
-                    // validation ก่อน access dictionary
                     if (!versionMap.ContainsKey(name))
                     {
                         throw new KeyNotFoundException($"Version data for '{name}' not found from AMLO API");
                     }
 
                     var newVersion = versionMap[name];
-
-                    // listNamesDict[al-qaida] => FREEZE 04 UN 1267 
-                    var codeName = listNamesDict[name];
+                    var endpoint = endpointMap[name];
+                    var codeName = endpoint.ListName;
 
                     var isUpdated = await CompareVersionAsync(name, newVersion, codeName);
                     return new { Name = name, IsUpdated = isUpdated };
@@ -183,7 +170,7 @@ namespace AMLO.Project.Services
                 var downloadResults = new Dictionary<string, bool>();
                 if (updatedLists.Count > 0)
                 {
-                    downloadResults = await DownloadAndStoreFilesAsync(updatedLists, versionsFromAMLO);
+                    downloadResults = await DownloadAndStoreFilesAsync(updatedLists, versionsFromAMLO, endpointMap);
                 }
 
                 // Update database + cache ตามผลการ download
@@ -194,20 +181,18 @@ namespace AMLO.Project.Services
                 {
                     var listName = downloadResult.Key;
                     var isSuccess = downloadResult.Value;
-                    var codeName = listNamesDict[listName];
+                    var endpoint = endpointMap[listName];
+                    var codeName = endpoint.ListName;
                     var newVersion = versionMap[listName];
-                    //var versionDate = versionsFromAMLO[listName];
                     var newVersionDate = versionsFromAMLO.FirstOrDefault(v => v.Name == listName)?.VersionDate ?? "";
 
                     if (isSuccess)
                     {
-                        // Download สำเร็จ → Update DB: version=new, status=success
                         await UpdateVersionInDatabaseAsync(listName, codeName, newVersion, newVersionDate);
                         successfulDownloads.Add(listName);
                     }
                     else
                     {
-                        // Download ล้มเหลว → Update DB: version=new, status=failed + update cache
                         await FailVersionInDatabaseAsync(listName, codeName, newVersion, newVersionDate);
                         failedDownloads.Add(listName);
                     }
@@ -234,15 +219,15 @@ namespace AMLO.Project.Services
             }
         }
 
-        // ฟังก์ชันหลักสำหรับดาวน์โหลดไฟล์จาก AMLO API, ถอดรหัส, แตกไฟล์, รวม CSV และอัปโหลดไป Azure Blob Storage
-        public async Task<Dictionary<string, bool>> DownloadAndStoreFilesAsync(List<string> names, List<AmloVersionRecordDto> versionsFromAMLO)
+        public async Task<Dictionary<string, bool>> DownloadAndStoreFilesAsync(List<string> names, List<AmloVersionRecordDto> versionsFromAMLO, Dictionary<string, AmloEndpoint> endpointMap)
         {
             string projectRoot = Directory.GetParent(AppContext.BaseDirectory).Parent.Parent.Parent.FullName;
-            var baseUrl = config["Amlo:BaseUrl"];
+
             var endpoints = new Dictionary<string, string>();
             foreach (var name in names)
             {
-                endpoints.Add(name, $"{baseUrl}{name}");
+                var endpoint = endpointMap[name];
+                endpoints.Add(name, endpoint.DataEndpoint);
             }
 
             var amloFilesPath = Path.Combine(projectRoot, DATA_FOLDER, AMLO_FILES_FOLDER);
@@ -453,8 +438,6 @@ namespace AMLO.Project.Services
                     VersionNumber = newVersionFromAMLO,
                     Status = dbVersion.Status, //pending
                     VersionDate = dbVersion.VersionDate,
-                    //CreatedDate = dbVersion.CreatedDate,
-                    //UpdatedDate = dbVersion.UpdatedDate
                 };
                 SetCache(name, recordToCache);
 
@@ -480,8 +463,6 @@ namespace AMLO.Project.Services
                 VersionNumber = newVersionFromAMLO,
                 Status = "pending",
                 VersionDate = "",
-                //CreatedDate = DateTime.UtcNow,
-                //UpdatedDate = DateTime.UtcNow
             };
             SetCache(name, newRecord);
             return true;
@@ -582,27 +563,28 @@ namespace AMLO.Project.Services
         }
 
         // ฟังก์ชันสำหรับดึงข้อมูล Version จาก AMLO API แบบขนาน (Parallel) โดยใช้ listNames ที่ส่งเข้ามา
-        public async Task<List<AmloVersionRecordDto>> GetVersionAllTypeAsync(string[] listNames)
+        public async Task<List<AmloVersionRecordDto>> GetVersionAllTypeAsync(string[] listNames, Dictionary<string, AmloEndpoint> endpointMap)
         {
-            var baseUrl = config["Amlo:BaseUrl"];
-
-            // Build endpoints dynamically จาก listNames
-            var endpoints = listNames.ToDictionary(
-                name => name,
-                name => $"{baseUrl}version_check_{name}"
-            );
+            var requestEndpoints = new Dictionary<string, string>();
+            foreach (var name in listNames)
+            {
+                if (endpointMap.TryGetValue(name, out var endpoint))
+                {
+                    requestEndpoints[name] = endpoint.VersionEndpoint;
+                }
+            }
 
             // จำกัดการขอ Version พร้อมกันที่ 3 คิว
             using var semaphore = new SemaphoreSlim(3, 3);
 
-            var tasks = endpoints.Select(async endpoint =>
+            var tasks = requestEndpoints.Select(async endpointEntry =>
             {
-                var item = new AmloVersionRecordDto { Name = endpoint.Key };
+                var item = new AmloVersionRecordDto { Name = endpointEntry.Key };
 
                 await semaphore.WaitAsync();
                 try
                 {
-                    var result = await SendRequestAsync(endpoint.Value);
+                    var result = await SendRequestAsync(endpointEntry.Value);
 
                     if (string.IsNullOrEmpty(result))
                     {
@@ -640,6 +622,7 @@ namespace AMLO.Project.Services
             var results = await Task.WhenAll(tasks);
             return results.ToList();
         }
+
 
         // ฟังก์ชันสำหรับส่ง HTTP Request ด้วย FlurlClient ที่สร้างไว้แล้ว พร้อมจัดการ Rate Limit (429) และ Network Error อื่นๆ
         private async Task<string> SendRequestAsync(string url)
