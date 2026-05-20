@@ -1,28 +1,35 @@
 ﻿using AMLO.Project.Helpers;
+using AMLO.Project.Models;
 using AMLO.Project.Services;
 using AMLO.Project.Services.Dac;
 using AMLO.Project.Services.SurrealDbProvider;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using SurrealDb.Net;
 
 namespace AMLO.Project.Extensions
 {
     public static class AmloServiceCollectionExtensions
     {
         public static IServiceCollection AddAmloProject(
-            this IServiceCollection services, 
-            string dbUrl, 
-            string user, 
-            string pass, 
-            string ns, 
-            string db)
+            this IServiceCollection services,
+            IConfiguration configuration)
         {
             MapsterConfig.RegisterMappings();
 
             // เชื่อมต่อระบบกับฐานข้อมูล SurrealDB ผ่านมาตรฐาน Connection String
-            var connectionString = $"Server={dbUrl};Namespace={ns};Database={db};Username={user};Password={pass}";
-            services.AddSurreal(connectionString);
+            services.Configure<SurrealDbConnectionOptions>(
+                configuration.GetSection(SurrealDbConnectionOptions.SurrealDb));
+
+            //ดึงค่า Connection String
+            var surrealDbConfig = configuration.GetSection(SurrealDbConnectionOptions.SurrealDb).Get<SurrealDbConnectionOptions>();
+
+            if (surrealDbConfig == null || string.IsNullOrWhiteSpace(surrealDbConfig.ConnectionString))
+            {
+                throw new InvalidOperationException("SurrealDb connection string is missing in appsettings.");
+            }
+
+            //เชื่อมต่อ SurrealDb.Net (ส่งค่า Connection String เข้าไปตรงๆ และตั้งเป็น Scoped)
+            services.AddSurreal(surrealDbConfig.ConnectionString, ServiceLifetime.Scoped);
 
             // ลงทะเบียนหน่วยประมวลผลพื้นฐานของฐานข้อมูล SurrealDB
             services.AddScoped<SurrealDbProviderFactoryBase, SurrealDbProviderFactory>();
