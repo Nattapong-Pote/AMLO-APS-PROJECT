@@ -28,24 +28,33 @@ namespace AMLO.Project.Controllers
         /// HTTP POST: /api/processData/import-csv
         /// </summary>
         [HttpPost("import-csv")]
-        public async Task<IActionResult> ImportCsvAsync()
+        public async Task<IActionResult> ImportCsvAsync([FromBody] ImportCsvRequest request)
         {
+            if (request == null || string.IsNullOrWhiteSpace(request.FileName))
+            {
+                return BadRequest(new
+                {
+                    Status = "Error",
+                    Message = "ไม่สามารถดำเนินการได้: เนื่องจากข้อมูล 'fileName' ใน Request Body เป็นค่าว่างหรือรูปแบบไม่ถูกต้อง"
+                });
+            }
+
             try
             {
-                _logger.LogInformation($"[API] Starting CSV import ...");
+                _logger.LogInformation("[API] Starting CSV import for explicit file: {FileName}", request.FileName);
 
                 // เรียกใช้งาน Service
-                await _processService.ImportCsvAsync("*.csv");
+                await _processService.ImportCsvAsync(request.FileName);
 
                 return Ok(new
                 {
                     Status = "Success",
-                    Message = "CSV data has been successfully imported to SurrealDB."
+                    Message = $"ไฟล์ '{request.FileName}' ได้รับการประมวลผลและบันทึกลง SurrealDB เรียบร้อยแล้ว"
                 });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, $"[API ERROR] {ex.Message}");
+                _logger.LogError(ex, "[API ERROR] การประมวลผลไฟล์ {FileName} ล้มเหลว: {Message}", request.FileName, ex.Message);
                 // หากเกิด Error จะส่ง HTTP Status 500 กลับไปให้ฝั่งที่เรียก API
                 return StatusCode(500, new
                 {
@@ -54,6 +63,14 @@ namespace AMLO.Project.Controllers
                     InnerError = ex.InnerException?.Message
                 });
             }
+        }
+
+        /// <summary>
+        /// Data Transfer Object สำหรับรับข้อมูลจากฝั่งขอยิง API
+        /// </summary>
+        public class ImportCsvRequest
+        {
+            public string FileName { get; set; } = string.Empty;
         }
     }
 }

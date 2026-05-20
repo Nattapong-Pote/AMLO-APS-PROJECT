@@ -36,19 +36,11 @@ namespace AMLO.Project.Extensions
             services.AddScoped<IProcessDataServiceDAC, ProcessDataServiceDAC>();
             services.AddScoped<IProcessedFileTrackerDAC, ProcessedFileTrackerDAC>();
             services.AddScoped<IAmloSyncVersionDAC, AmloSyncVersionDAC>();
+            services.AddScoped<ICsvFileReaderServiceDAC, AzureBlobCsvFileReaderService>();
+
             services.AddScoped<IAmloSyncService, AmloSyncService>();
             services.AddScoped<ICsvMergeService, CsvMergeService>();
             services.AddScoped<IUploadToAzureBlobService, UploadToAzureBlobService>();
-
-            // ลงทะเบียนตัวอ่านไฟล์ข้อมูลแยกตามรูปแบบของ Configuration
-            services.AddScoped<ICsvFileReaderServiceDAC>(provider =>
-            {
-                var config = provider.GetRequiredService<IConfiguration>();
-                var type = config["CsvFileReader:Type"] ?? "Local";
-                if (type.Equals("AzureBlob", StringComparison.OrdinalIgnoreCase))
-                    return new AzureBlobCsvFileReaderService(config);
-                return new LocalCsvFileReaderService();
-            });
 
             services.AddScoped<DataProcessingService>();
 

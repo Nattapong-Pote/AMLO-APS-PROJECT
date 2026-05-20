@@ -1,14 +1,15 @@
-﻿using System.Collections.Generic;
-using System.Globalization;
-using System.IO;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Text.RegularExpressions;
+﻿using Azure.Storage.Blobs;
 using CsvHelper;
 using CsvHelper.Configuration;
-using Azure.Storage.Blobs;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.IO;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace AMLO.Project.Services.Dac;
 
@@ -20,54 +21,23 @@ public interface ICsvFileReaderServiceDAC
     Task<IEnumerable<IDictionary<string, string>>> GetAll(string filePath, CancellationToken cancellationToken = default);
 }
 
-public class LocalCsvFileReaderService : ICsvFileReaderServiceDAC
-{
-    public async Task<IEnumerable<IDictionary<string, string>>> GetAll(string filePath, CancellationToken cancellationToken = default)
-    {
-        var records = new List<IDictionary<string, string>>();
-        if (!File.Exists(filePath))
-            return records;
-
-        var config = new CsvConfiguration(CultureInfo.InvariantCulture) { HasHeaderRecord = true };
-        using var reader = new StreamReader(filePath);
-        using var csv = new CsvReader(reader, config);
-
-        await csv.ReadAsync();
-        csv.ReadHeader();
-        var headers = csv.HeaderRecord;
-        if (headers == null) return records;
-
-        while (await csv.ReadAsync())
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var dict = new Dictionary<string, string>();
-            foreach (var header in headers)
-            {
-                dict[header] = csv.GetField(header);
-            }
-            records.Add(dict);
-        }
-        return records;
-    }
-}
-
 public class AzureBlobCsvFileReaderService : ICsvFileReaderServiceDAC
 {
     private readonly string _connectionString;
     private readonly string _containerName;
-    private readonly string _logFolderPath;
-    private readonly string _filePattern;
+    private readonly ILogger<AzureBlobCsvFileReaderService> _logger;
 
-    public AzureBlobCsvFileReaderService(IConfiguration config)
+    public AzureBlobCsvFileReaderService(
+        IConfiguration config,
+        ILogger<AzureBlobCsvFileReaderService> logger)
     {
-        _connectionString = config["CsvFileReader:Azure:ConnectionString"]
-            ?? throw new ArgumentNullException(nameof(_connectionString), "ไม่พบการตั้งค่า 'CsvFileReader:Azure:ConnectionString' ใน appsettings.json");
+        _connectionString = config["AzureBlobSettings:ConnectionString"]
+            ?? throw new ArgumentNullException(nameof(_connectionString), "ไม่พบการตั้งค่า 'AzureBlobSettings:ConnectionString' ใน appsettings.json");
 
-        _containerName = config["CsvFileReader:Azure:ContainerName"]
-            ?? throw new ArgumentNullException(nameof(_containerName), "ไม่พบการตั้งค่า 'CsvFileReader:Azure:ContainerName' ใน appsettings.json");
+        _containerName = config["AzureBlobSettings:ContainerName"]
+            ?? throw new ArgumentNullException(nameof(_containerName), "ไม่พบการตั้งค่า 'AzureBlobSettings:ContainerName' ใน appsettings.json");
 
-        _filePattern = config["CsvFileReader:Azure:FilePattern"] ?? "*.csv";
-        _logFolderPath = config["CsvFileReader:Log:FolderPath"] ?? "CsvReadLogs";
+        _logger = logger;
     }
 
     /// <summary>
@@ -121,63 +91,53 @@ public class AzureBlobCsvFileReaderService : ICsvFileReaderServiceDAC
     public async Task<IEnumerable<IDictionary<string, string>>> GetAll(string filePath, CancellationToken cancellationToken = default)
     {
         var allRecords = new List<IDictionary<string, string>>();
-        Directory.CreateDirectory(_logFolderPath);
-        var logFile = Path.Combine(_logFolderPath, $"readlog_{DateTime.UtcNow:yyyyMMdd}.txt");
-        var logLines = new List<string>();
-        void Log(string msg)
-        {
-            var line = $"[AzureBlobCsvFileReaderService][{DateTime.UtcNow:u}] {msg}";
-            Console.WriteLine(line);
-            logLines.Add(line);
-        }
+        
         try
         {
-            Log($"CONFIG: ConnectionString={_connectionString}, ContainerName={_containerName}, FilePattern={_filePattern}, LogFolder={_logFolderPath}");
-            Log($"TRY CONNECT BlobServiceClient...");
+            _logger.LogInformation("TRY CONNECT BlobServiceClient to container: {ContainerName}...", _containerName);
             var blobServiceClient = new BlobServiceClient(_connectionString);
             var containerClient = blobServiceClient.GetBlobContainerClient(_containerName);
 
-            Log($"SEARCHING for blob matching: {filePath}");
+            _logger.LogInformation("SEARCHING for blob matching: {FilePath}", filePath);
 
             var foundBlobNames = await FindBlobFileAsync(containerClient, filePath, cancellationToken);
 
             if (foundBlobNames == null || !foundBlobNames.Any())
             {
-                Log($"FAIL: No blob found matching pattern: {filePath}");
-                await File.AppendAllLinesAsync(logFile, logLines, cancellationToken);
+                _logger.LogWarning("FAIL: No blob found matching pattern: {FilePath}", filePath);
                 return allRecords;
             }
-            Log($"SUCCESS: Found {foundBlobNames.Count} files matching the pattern.");
+            _logger.LogInformation("SUCCESS: Found {BlobCount} files matching the pattern.", foundBlobNames.Count);
 
             foreach (var blobName in foundBlobNames)
             {
-                Log($"TRY GET BlobClient for blob: {blobName}");
+                _logger.LogInformation("TRY GET BlobClient for blob: {BlobName}", blobName);
                 var blobClient = containerClient.GetBlobClient(blobName);
 
-                Log($"CHECK blob.ExistsAsync for {blobName}...");
+                _logger.LogInformation("CHECK blob.ExistsAsync for {BlobName}", blobName);
                 if (!await blobClient.ExistsAsync(cancellationToken))
                 {
-                    Log($"WARNING: Blob not found: {blobName} (Skipping)");
+                    _logger.LogWarning("WARNING: Blob not found: {BlobName} (Skipping)", blobName);
                     continue;
                 }
 
-                Log($"Blob {blobName} found! Opening stream...");
+                _logger.LogInformation("Blob {BlobName} found! Opening stream...", blobName);
                 using var stream = await blobClient.OpenReadAsync(cancellationToken: cancellationToken);
                 var csvConfig = new CsvConfiguration(CultureInfo.InvariantCulture) { HasHeaderRecord = true };
                 using var reader = new StreamReader(stream);
                 using var csv = new CsvReader(reader, csvConfig);
 
-                Log($"Reading CSV header for {blobName}...");
+                _logger.LogInformation("Reading CSV header for {BlobName}...", blobName);
                 await csv.ReadAsync();
                 csv.ReadHeader();
                 var headers = csv.HeaderRecord;
                 if (headers == null)
                 {
-                    Log($"WARNING: No header in CSV {blobName} (Skipping)");
+                    _logger.LogWarning("WARNING: No header in CSV {BlobName} (Skipping)", blobName);
                     continue;
                 }
 
-                Log($"Reading CSV records for {blobName}...");
+                _logger.LogInformation("Reading CSV records for {BlobName}...", blobName);
                 int recordCount = 0;
                 while (await csv.ReadAsync())
                 {
@@ -190,18 +150,14 @@ public class AzureBlobCsvFileReaderService : ICsvFileReaderServiceDAC
                     allRecords.Add(dict);
                     recordCount++;
                 }
-                Log($"SUCCESS: Read {recordCount} records from blob: {blobName}");
+                _logger.LogInformation("SUCCESS: Read {RecordCount} records from blob: {BlobName}", recordCount, blobName);
             }
 
-            Log($"FINAL SUCCESS: Total read {allRecords.Count} records from {foundBlobNames.Count} blobs.");
-            await File.AppendAllLinesAsync(logFile, logLines, cancellationToken);
+            _logger.LogInformation("FINAL SUCCESS: Total read {RecordCount} records from {BlobCount} blobs.", allRecords.Count, foundBlobNames.Count);
         }
         catch (Exception ex)
         {
-            Log($"ERROR: {ex.GetType().Name}: {ex.Message}");
-            if (ex.InnerException != null)
-                Log($"INNER: {ex.InnerException.Message}");
-            await File.AppendAllLinesAsync(logFile, logLines, cancellationToken);
+            _logger.LogError(ex, "ERROR during CSV reading: {Message}", ex.Message);
         }
 
         return allRecords;
