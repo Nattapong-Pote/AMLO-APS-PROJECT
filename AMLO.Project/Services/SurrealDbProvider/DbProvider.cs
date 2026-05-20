@@ -87,9 +87,9 @@ public class DbProvider<TsurrealModel, TamloModel> : IDbProvider<TsurrealModel, 
 {
     private readonly ISurrealDbSession _surrealDbSession;
 
-    public DbProvider(ISurrealDbSession surrealDbClient)
+    public DbProvider(ISurrealDbSession surrealDbSession)
     {
-        _surrealDbSession = surrealDbClient;
+        _surrealDbSession = surrealDbSession;
     }
 
     public string Table => typeof(TsurrealModel).Name;
